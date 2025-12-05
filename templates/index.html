@@ -1,0 +1,270 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>PDF → XLSX Converter</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            padding: 25px;
+            background: #f7f7f7;
+        }
+
+        h2 { margin-bottom: 20px; }
+
+        .box {
+            background: white;
+            border: 1px solid #ccc;
+            padding: 20px;
+            width: 450px;
+            border-radius: 8px;
+        }
+
+        label {
+            font-weight: bold;
+            margin-top: 10px;
+            display: block;
+        }
+
+        select, input[type="file"], button {
+            width: 100%;
+            padding: 10px;
+            margin-top: 6px;
+            margin-bottom: 12px;
+            border-radius: 5px;
+            border: 1px solid #aaa;
+            font-size: 14px;
+        }
+
+        button {
+            background: #3b7ddd;
+            color: white;
+            border: none;
+            cursor: pointer;
+        }
+
+        button:hover { background: #2f69c4; }
+
+        /* Progress bar container */
+        #progressContainer {
+            width: 100%;
+            background: #ddd;
+            border-radius: 6px;
+            margin-top: 15px;
+            display: none;
+        }
+
+        /* Bar */
+        #progressBar {
+            width: 0%;
+            height: 22px;
+            background: #4CAF50;
+            color: white;
+            text-align: center;
+            border-radius: 6px;
+            transition: width .2s ease-in-out;
+        }
+    </style>
+</head>
+<body>
+
+<h2>Convert PDF DPT → XLSX (Multi Sheet)</h2>
+
+<div class="box">
+    <form id="uploadForm" action="/" method="POST" enctype="multipart/form-data">
+
+        <!-- REGION DROPDOWNS -->
+        <label>Provinsi:</label>
+        <select name="provinsi" id="provinsi" required>
+            <option value="">Loading...</option>
+        </select>
+
+        <label>Kabupaten / Kota:</label>
+        <select name="kabkot" id="kabkot" required>
+            <option value="">-- Pilih Provinsi dulu --</option>
+        </select>
+
+        <label>Kecamatan:</label>
+        <select name="kecamatan" id="kecamatan" required>
+            <option value="">-- Pilih Kab/Kota dulu --</option>
+        </select>
+
+        <label>Desa / Kelurahan:</label>
+        <select name="deskel" id="deskel" required>
+            <option value="">-- Pilih Kecamatan dulu --</option>
+        </select>
+
+        <br>
+
+        <!-- PDF INPUT -->
+        <label>Pilih PDF (maksimal 150 file):</label>
+        <input type="file" name="pdf_file[]" accept="application/pdf" multiple required>
+
+        <button type="submit" id="btnSubmit">Convert</button>
+
+        <!-- PROGRESS BAR -->
+        <div id="progressContainer">
+            <div id="progressBar">0%</div>
+        </div>
+
+        <!-- TEKS PROGRESS FILE -->
+        <div id="fileProgressText" style="margin-top:8px; font-weight:bold; display:none;">
+            0 / 0 file
+        </div>
+
+    </form>
+</div>
+
+
+<!-- =======================================================
+     AJAX DROPDOWN WILAYAH
+======================================================== -->
+<script>
+// PROVINSI
+fetch('/get_provinsi')
+    .then(r => r.json())
+    .then(data => {
+        let opts = '<option value="">-- Pilih Provinsi --</option>';
+        data.forEach(p => { opts += `<option value="${p.code}">${p.nama}</option>`; });
+        document.getElementById('provinsi').innerHTML = opts;
+    });
+
+// KABKOT
+document.getElementById("provinsi").addEventListener("change", function() {
+    fetch(`/get_kabkot/${this.value}`)
+        .then(r => r.json())
+        .then(data => {
+            let opts = '<option value="">-- Pilih Kab/Kota --</option>';
+            data.forEach(i => { opts += `<option value="${i.code}">${i.nama}</option>`; });
+            document.getElementById('kabkot').innerHTML = opts;
+            document.getElementById('kecamatan').innerHTML = '<option value="">-- Pilih Kab/Kota dulu --</option>';
+            document.getElementById('deskel').innerHTML = '<option value="">-- Pilih Kecamatan dulu --</option>';
+        });
+});
+
+// KECAMATAN
+document.getElementById("kabkot").addEventListener("change", function() {
+    fetch(`/get_kecamatan/${this.value}`)
+        .then(r => r.json())
+        .then(data => {
+            let opts = '<option value="">-- Pilih Kecamatan --</option>';
+            data.forEach(i => { opts += `<option value="${i.code}">${i.nama}</option>`; });
+            document.getElementById('kecamatan').innerHTML = opts;
+            document.getElementById('deskel').innerHTML = '<option value="">-- Pilih Kecamatan dulu --</option>';
+        });
+});
+
+// DESKEL
+document.getElementById("kecamatan").addEventListener("change", function() {
+    fetch(`/get_deskel/${this.value}`)
+        .then(r => r.json())
+        .then(data => {
+            let opts = '<option value="">-- Pilih Desa/Kelurahan --</option>';
+            data.forEach(i => { opts += `<option value="${i.code}">${i.nama}</option>`; });
+            document.getElementById('deskel').innerHTML = opts;
+        });
+});
+</script>
+
+
+<!-- =======================================================
+     PROGRESS BAR UPLOAD + INFINITE + FILE COUNT
+======================================================== -->
+<script>
+
+let infiniteTimer;
+let progressInterval;
+
+function startInfiniteProgress() {
+    const bar = document.getElementById("progressBar");
+    bar.innerText = "Sedang memproses PDF...";
+    bar.style.transition = "none";
+
+    let pos = 0;
+
+    function animate() {
+        pos += 2;
+        if (pos > 100) pos = 0;
+        bar.style.width = pos + "%";
+        infiniteTimer = requestAnimationFrame(animate);
+    }
+
+    animate();
+}
+
+// Polling ke /progress untuk update "X / Y file"
+function checkProgress() {
+    progressInterval = setInterval(() => {
+        fetch('/progress')
+            .then(r => r.json())
+            .then(p => {
+                if (p.total > 0) {
+                    const txt = document.getElementById("fileProgressText");
+                    txt.style.display = "block";
+                    txt.innerText = `${p.done} / ${p.total} file`;
+
+                    if (p.done >= p.total) {
+                        clearInterval(progressInterval);
+                    }
+                }
+            })
+            .catch(() => {});
+    }, 500);
+}
+
+document.getElementById("uploadForm").addEventListener("submit", function(e) {
+    e.preventDefault();
+
+    const btn = document.getElementById("btnSubmit");
+    btn.disabled = true;
+
+    const container = document.getElementById("progressContainer");
+    container.style.display = "block";
+
+    let formData = new FormData(this);
+
+    let xhr = new XMLHttpRequest();
+    xhr.open("POST", "/", true);
+    xhr.responseType = "blob";
+
+    // PROGRESS UPLOAD
+    xhr.upload.onprogress = function(e) {
+        if (e.lengthComputable) {
+            let percent = Math.round((e.loaded / e.total) * 100);
+            let bar = document.getElementById("progressBar");
+
+            bar.style.width = percent + "%";
+            bar.innerText = percent + "%";
+
+            if (percent === 100) {
+                setTimeout(() => { 
+                    startInfiniteProgress(); 
+                    checkProgress();         // mulai polling progress file
+                }, 400);
+            }
+        }
+    };
+
+    // SAAT SERVER SELESAI → DOWNLOAD
+    xhr.onload = function() {
+        cancelAnimationFrame(infiniteTimer);
+        if (progressInterval) clearInterval(progressInterval);
+
+        if (xhr.status === 200) {
+            let blob = new Blob([xhr.response], { type: xhr.getResponseHeader("Content-Type") });
+            let link = document.createElement('a');
+            link.href = window.URL.createObjectURL(blob);
+            link.download = xhr.getResponseHeader("Content-Disposition")?.split("filename=")[1] || "output.xlsx";
+            link.click();
+        } else {
+            alert("Error dalam proses!");
+        }
+
+        btn.disabled = false;
+    };
+
+    xhr.send(formData);
+});
+</script>
+
+</body>
+</html>
